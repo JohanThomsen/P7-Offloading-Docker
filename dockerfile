@@ -10,4 +10,4 @@ COPY handler.py /
 COPY requirements.txt /
 RUN pip install -r requirements.txt
 # final configuration
-CMD python3 handler.py
+CMD ["python3", "handler.py"]
