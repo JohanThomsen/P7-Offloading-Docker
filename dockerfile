@@ -9,6 +9,6 @@ RUN apt-get update && apt-get install -y python3 python3-pip
 COPY handler.py /
 COPY requirements.txt /
 RUN pip install -r requirements.txt
-RUN sudo apt install cpufrequtils
+RUN apt install cpufrequtils -y
 # final configuration
 CMD ["python3", "handler.py"]
