@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM ubuntu:22.04
+FROM python:3.10-slim-bullseye
 
 # install app dependencies
-RUN apt-get update && apt-get install -y python3 python3-pip
-
+RUN apt-get update
 
 # install app
 COPY handler.py /
