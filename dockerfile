@@ -6,8 +6,12 @@ RUN apt-get update
 
 # install app
 COPY handler.py /
+COPY cpuFreq.py /
 COPY requirements.txt /
+COPY pythonRunner.sh /
+RUN chmod a+x pythonRunner.sh
 RUN pip install -r requirements.txt
 RUN apt install cpufrequtils -y
+
 # final configuration
-CMD ["python3", "handler.py"]
+CMD ["./pythonRunner.sh"]
