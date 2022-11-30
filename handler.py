@@ -1,131 +1,145 @@
-from asyncio import sleep, run, wait, create_task
-from threading import Thread
-from flask import Flask
-import websockets
+import asyncio
+import json
+
+from websockets import connect
 import numpy as np
-import traceback
-from auction import auction_call
-from machineQueue import MachineQueue
-from frontEnd import start_frontend
-from globals import task_queue 
-from json import JSONEncoder
+from websockets.exceptions import ConnectionClosed, InvalidMessage
+import random
+import time
 
-def _default(self, obj):
-    return getattr(obj.__class__, "to_json", _default.default)(obj)
+CRED    = '\33[31m'
+CGREEN  = '\33[32m'
+CBLUE   = '\33[34m'
+CGREENHIGH  = '\33[92m'
+CBLUEHIGH   = '\33[94m'
 
-_default.default = JSONEncoder().default
-JSONEncoder.default = _default
+internal_value = 0
+idle_start_time = time.time()
+IDLE_POWER_CONSUMPTION = 1
+ACTIVE_POWER_CONSUMPTION = 5
+task_difficulty_duration = {}
+prev_task_id = -1
 
-app = Flask(__name__)
-machines: MachineQueue
-prev_winner = None
+def calc_split_matrix(matrices):
+    global task_difficulty_duration
+    global internal_value
+    active_start_time = time.time()
+
+    """Dot products the pair into the respective cell."""
+    matrix1 = matrices.get('mat1')
+    matrix2 = matrices.get('mat2')
+    result = np.matmul(matrix1, matrix2)
+
+    # Dont do this but required to send as json instead of ndarray
+    a: list = list()
+    for i in range(len(result)):
+        a.append(list(result[i]))
+
+    task_duration = (active_start_time - time.time())
+    task_difficulty_duration['max_shape_number'] = task_duration
+
+    internal_value -= task_duration
+    return a
 
 
-async def new_connection(websocket):
+async def establish_client():
     """
-    Upon a new websocket connection add the machine to the known machines and set it to available\n
-    when the connection is disrupted (Timeout, ConnectionClosed, etc.) the machine is removed from the known machines. 
-    """
-    global machines
-    machines.put(websocket)
-    try:
-        await websocket.wait_closed()
-    finally:
-        machines.remove_socket(websocket)
+    Starts the client and connects to the server on ws://192.168.1.10:5001.
+    If the client fails then it will retry until the server is available again.
 
-async def establish_server():
-    global machines
-    """Start a websocket server on ws://192.168.1.10:5001, upon a new connection call new_connection while the server runs handle_server."""
+    Once connected wait for a task and execute it, sending the result back.
+    """
     host = '192.168.1.10'
     port = 5001
-    async with websockets.serve(new_connection, host, port, max_size=None) as websocket:
-        machines = MachineQueue()
-        await handle_server()
 
 
-async def handle_server():
-    """Has the server "run in the background" for task offloading to the machines connected."""
-    await sleep(0.1)
-    while True:
-        await sleep(0.01)
-        # If there is a task and a machine then start a new task by splitting a matrix into vector pairs
-        if len(task_queue) != 0 and not machines.empty():
-            amount_tasks = min(len(machines), len(task_queue))
-            tasks = [create_task(task_handler()) for _ in range(amount_tasks)]
-            done, pending = await wait(tasks)
-
-
-async def task_handler():
-    '''Gets a task from the queue and start an auction for it when available.'''
-    task = task_queue.popleft() # Get a task from the task queue
-    results = await safe_send(task) # Send it to be auctioned
-    # Display result
-    print(f'equal: {results == np.matmul(task.mat1, task.mat2)}')
-    print(f'Clients: {len(machines)}')
-
-
-async def safe_send(task):
-    '''Gets the offloading parameters and wraps the auction in a failsafe to start a new auction if the tasks fails'''
-    offloading_parameters = await get_offloading_parameters()
     while True:
         try:
-            return await handle_communication(task, offloading_parameters)
+            async with connect(f"ws://{host}:{port}", max_size=None) as websocket:
+                while True:
+                    await recieve_handler(websocket)
+
+        except ConnectionRefusedError:
+            print(f'{CRED}Connection refused')
+            await asyncio.sleep(1)
+        except ConnectionClosed:
+            print(f'{CRED}Connection closed')
+            await asyncio.sleep(1)
+        except asyncio.exceptions.TimeoutError:
+            print(f'{CRED}Connection timed out')
+            await asyncio.sleep(1)
+        except InvalidMessage:
+            print(f'{CRED}Invalid Message')
+            await asyncio.sleep(1)
         except Exception:
-            traceback.print_exc()
+            print(f'{CRED} Unknown Error')
+            await asyncio.sleep(1)
 
 
-async def get_offloading_parameters():
-    '''Get the offloading parameters for the offloading with inputs from the server console.'''
-    offloading_parameters = {}
+async def recieve_handler(websocket):
+    global prev_task_id
+    received = json.loads(await websocket.recv())
+    if isinstance(received, list):
+        received[1]["task"] = json.loads(received[1]["task"] )
+        await auction_action(websocket, received)
+    elif isinstance(received, dict):
+        received["task"] = json.loads(received["task"] )
+        print(f'{CBLUEHIGH}finished receiving winner: {received["winner"]}')
+        if received.get('winner'):
+            await winner_action(websocket, received)
+        prev_task_id = received.get('task_id')
 
-    print("""What type of offloading to use?
-    Auction (default) 
-    Contract (not implemented)
-    First come, first server (FCFS) (not implemented)\n""") #We could just define our 4 types here, normal, with fines, with max_reward, both and save some enter
-    offloading_parameters["offloading_type"] = "Auction"
-
-    if offloading_parameters["offloading_type"] == "Auction" or offloading_parameters["offloading_type"] == "auction":
-        print("""What auction type to use?
-        Second Price Sealed Bid (SPSB) (default)
-        First Price Sealed Bid (FPSB)\n""")
-        offloading_parameters["auction_type"] = "SPSB" #input() or "SPSB"
-
-    print("""What frequency of tasks?
-    Slow (1/s)
-    Medium (5/s) (default)
-    Fast (10/s)\n""")
-    offloading_parameters["task_frequency"] = "Medium" #input() or "Medium"
-
-    print("""Do the tasks have deadlines?
-    No (Default)
-    Yes \n""")
-    offloading_parameters["deadlines"] = "No" #input() or "No"
-
-    print("""Are there fines for abandoning a job or going over a possible deadline?
-    No (default)
-    Yes \n""")
-    offloading_parameters["fines"] = "No" #input() or "No"
-
-    print("""Is there a max reward for the tasks?
-    No (Default) 
-    Yes \n""")
-    offloading_parameters["max_reward"] = "No" #input() or "No"
-
-    #Simply add more cases to each of these or more categories
-    #Handling of types is later and on the machines
-    #Stuff likes this can also be split into seperate functions or its own file if needed
-
-    return offloading_parameters
-
-
-async def handle_communication(task, offloading_parameters):
-    '''Start an auction if a machine is available and it is an Auction.'''    
-    #Handle the contiuous check of available machines here or earlier
-    await machines.any_connection
+async def auction_action(websocket, recieved):
+    id, offloading_parameters = recieved
+    print(f'{CBLUEHIGH}finished receiving auction {{id:{id} task:{offloading_parameters.get("task_id")}}}')
     if offloading_parameters["offloading_type"] == "Auction":
-        return await auction_call(offloading_parameters, task, machines)
+        if offloading_parameters["auction_type"] == "Second Price Sealed Bid" or offloading_parameters["auction_type"] == "SPSB" or offloading_parameters["auction_type"] == "FPSB" or offloading_parameters["auction_type"] == "First Price Sealed Bid":
+            await bid_truthfully(offloading_parameters, websocket, id)
+
+async def winner_action(websocket, auction_result):
+    global internal_value, idle_start_time, prev_task_id
+    result = calc_split_matrix(auction_result["task"]) #Interrupt here for continuous check for new auctions and cancelling current auction
+        #The above maybe needs to be done in a separate process, so we can compute while still judging auctions
+        #This does require far better estimation of whether auctions are worth joining
+    print(f'{CGREEN}sending result...')
+    await websocket.send(json.dumps(result))
+    print(f'{CGREENHIGH}finished sending result')
+    internal_value += auction_result["reward"]
+    idle_start_time = time.time()
+    prev_task_id = auction_result['task_id']
+
+async def bid_truthfully(offloading_parameters, websocket, id):
+    global idle_start_time
+    global internal_value
+    global task_difficulty_duration
+    #We have the task as offloading_parameters["task"] for difficulty measuring
+    # we have deadlines, the task, the frequency, the max reward, and fines
+    op = offloading_parameters
+
+    internal_value = (idle_start_time - time.time()) * IDLE_POWER_CONSUMPTION
+    idle_start_time = time.time()
+
+    #Change the bid to be based on the dynamically estimated cost of the task
+    #get previous time to complete, else estimate as 1ms per line in vector
+    estimated_cost_of_task = task_difficulty_duration.get(op['task']['max_shape_number'] , op['task']['max_shape_number'] * 0.001) * IDLE_POWER_CONSUMPTION 
+    if internal_value < 0:
+        bid_value = estimated_cost_of_task + abs(internal_value)
+
+    if op.get("deadlines") == "Yes":
+        if op["task"].get("deadline") < task_difficulty_duration[op['task']['max_shape_number']]:
+            bid_value += op["task"].get("fine", 0) 
+
+    print(f'{CGREEN}start sending {bid_value}:{id}...')
+    if op.get("map_reward") == "Yes":
+        if bid_value < op["task"].get("max_reward"):
+            await websocket.send(json.dumps({"bid": bid_value, 'id': id}))
+        else:
+            await websocket.send(json.dumps({"bid": op["max_reward"], 'id': id}))
+    else:
+        await websocket.send(json.dumps({"bid": bid_value, 'id': id}))
+    print(f'{CGREENHIGH}finished sending')
+ 
 
 
-if __name__ == "__main__":
-    Thread(target=start_frontend, args=()).start()
-    run(establish_server()) # Run establish_server asynchronously 
+if __name__ == '__main__':
+    asyncio.run(establish_client())
