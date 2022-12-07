@@ -94,18 +94,18 @@ async def auction_action(websocket, recieved):
             await bid_truthfully(offloading_parameters, websocket, id)
 
 
-async def winner_action(websocket, auction_result):
+async def winner_action(websocket, auction_result: dict):
     global internal_value, idle_start_time, prev_task_id
     # Interrupt here for continuous check for new auctions and cancelling current auction
-    result = calc_split_matrix(auction_result["task"])
+    result = calc_split_matrix(auction_result.get("task"))
     # The above maybe needs to be done in a separate process, so we can compute while still judging auctions
     # This does require far better estimation of whether auctions are worth joining
     logger.log_colored_message(logger.colors.GREEN, 'sending result...')
-    await websocket.send(json.dumps(result))
+    await websocket.send(json.dumps({'result': result, 'task_id': auction_result.get('task_id')}))
     logger.log_colored_message(logger.colors.GREENHIGH, 'finished sending result')
-    internal_value += auction_result["reward"]
+    internal_value += auction_result.get("reward")
     idle_start_time = time.time()
-    prev_task_id = auction_result['task_id']
+    prev_task_id = auction_result.get('task_id')
 
 
 async def bid_truthfully(offloading_parameters, websocket, id):
