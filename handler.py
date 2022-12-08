@@ -130,15 +130,18 @@ async def bid_truthfully(offloading_parameters, websocket, id):
             # If the deadline is smaller than what is expected, add the fine to the bid to make a profit (if it exists).
             bid_value += offloading_parameters.get("fine", 0)
 
-    logger.log_colored_message(logger.colors.GREEN, f'start sending {bid_value}:{id}...')
+    to_send = {}
     if offloading_parameters.get("max_reward") == True:
         # get the maximum reward possible if the bid exceeds it
         if bid_value < offloading_parameters.get("max_reward"):
-            await websocket.send(json.dumps({"bid": bid_value, 'id': id}))
+            to_send = {"bid": bid_value, 'id': id}
         else:
-            await websocket.send(json.dumps({"bid": offloading_parameters.get("max_reward"), 'id': id}))
+            to_send = {"bid": offloading_parameters.get("max_reward"), 'id': id}
     else:
-        await websocket.send(json.dumps({"bid": bid_value, 'id': id}))
+            to_send = {"bid": bid_value, 'id': id}
+    to_send['task_id'] = offloading_parameters.get('task_id')
+    logger.log_colored_message(logger.colors.GREEN, f'start sending {bid_value}:{id}...')
+    await websocket.send(json.dumps(to_send))
     logger.log_colored_message(logger.colors.GREENHIGH, 'finished sending')
 
 
