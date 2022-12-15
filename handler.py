@@ -25,7 +25,7 @@ def calc_split_matrix(matrices):
 
     """Dot products the pair into the respective cell."""
     result  = matrices.get('mat1')
-    matrix 2 = matrices.get('mat2')
+    matrix2 = matrices.get('mat2')
     for x in range(0, 10000):
       result = np.matmul(result, matrix2)
 
