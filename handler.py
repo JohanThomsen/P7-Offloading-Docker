@@ -24,10 +24,10 @@ def calc_split_matrix(matrices):
     timer = time.time()
 
     """Dot products the pair into the respective cell."""
-    result = matrices.get('mat1')
-    matrix2 = matrices.get('mat2')
-    for x in range(0, 100):
-        result = np.matmul(result, matrix2)
+    result  = matrices.get('mat1')
+    matrix 2 = matrices.get('mat2')
+    for x in range(0, 10000):
+      result = np.matmul(result, matrix2)
 
     # Dont do this but required to send as json instead of ndarray
     a: list = list()
